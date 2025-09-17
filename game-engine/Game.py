@@ -8,11 +8,8 @@ from termcolor import colored
 # Board size
 N = 6
 
-# Number of nodes in a row of the mesh
-NODES_ROW = N + 1
-
-# Number of nodes in the mesh
-NUM_NODES = NODES_ROW ** 2
+# Number of tokens (nodes) each player has to collect, in order
+NUM_TOKENS = 5
 
 # Minimum number of walls on the board
 MIN_WALLS = 19
@@ -50,12 +47,13 @@ class Game:
         self.is_over = False
         self.walls = walls
 
-        self.nodes_grid = np.arange(NUM_NODES).reshape((N + 1, N + 1)) 
+        self.nodes = np.arange(N**2, dtype=np.int8)
+        self.nodes_grid = self.nodes.reshape((N, N))
         self.corner_nodes = [
             self._flatten_node(0, 0),
-            self._flatten_node(0, N),
-            self._flatten_node(N, 0),
-            self._flatten_node(N, N)
+            self._flatten_node(0, N - 1),
+            self._flatten_node(N - 1, 0),
+            self._flatten_node(N - 1, N - 1)
         ]
 
         # This is the starting pos for player 0. 
@@ -67,6 +65,10 @@ class Game:
         # and a hidden adjacency matrix representing the actual board configuration.
         self.visible_adj_matrix = self._init_adj_matrix()
         self.hidden_adj_matrix = self._init_adj_matrix()
+
+        # Each player will have to collect NUM_TOKENS nodes in order
+        self.player_tokens = ([], [])
+        self.player_tokens = self._init_player_tokens()
 
         # Randomly remove walls from the hidden adjacency matrix to create the board configuration.
         self.hidden_remove_walls()
@@ -82,7 +84,7 @@ class Game:
                 3. The edges on the boundary of the graph are not connected to any other nodes outside the graph.
         """
         # Horizontal connections
-        adj_matrix = np.zeros((NUM_NODES, NUM_NODES), dtype=np.int8)
+        adj_matrix = np.zeros((N**2, N**2), dtype=np.int8)
 
         h_left = self.nodes_grid[:, :-1].flatten()
         h_right = self.nodes_grid[:, 1:].flatten()
@@ -102,19 +104,41 @@ class Game:
             Player 0 starts at the specified starting position, and Player 1 starts at the opposite corner.
         """
         if self.starting_pos == StartingPos.TOP_LEFT:
-            return ((0, 0), (N, N))
+            return ((0, 0), (N - 1, N - 1))
         elif self.starting_pos == StartingPos.TOP_RIGHT:
-            return ((0, N), (N, 0))
+            return ((0, N - 1), (N - 1, 0))
         elif self.starting_pos == StartingPos.BOTTOM_LEFT:
-            return ((N, 0), (0, N))
+            return ((N - 1, 0), (0, N - 1))
         else:
-            return ((N, N), (0, 0))
+            return ((N - 1, N - 1), (0, 0))
+
+    def _init_player_tokens(self: Game) -> Tuple[list[int], list[int]]:
+        """ Initialize the tokens (nodes) each player has to collect, in order.
+            Each player will have NUM_TOKENS unique nodes to collect, randomly selected from the AVAILABLE nodes on the board.
+            A node is defined as available if it is not a corner node, nor a neighbor of a corner node in the hidden adjacency matrix.
+            The tokens for Player 0 and Player 1 must not overlap.
+        """
+        # Define unavailable nodes: corner nodes and their neighbors
+        unavailable_nodes = set(self.corner_nodes)
+        for corner in self.corner_nodes:
+            neighbors = np.where(self.hidden_adj_matrix[corner] == 1)[0]
+            unavailable_nodes.update(neighbors)
+
+        available_nodes = set(self.nodes) - unavailable_nodes
+
+        # Draw 2 * NUM_TOKENS unique nodes from available nodes
+        player_tokens = random.sample(sorted(available_nodes), 2 * NUM_TOKENS)
+
+        # Interleave tokens (player0, player1, player0, ...) for both players to ensure no overlap
+        player0_tokens = player_tokens[0::2]
+        player1_tokens = player_tokens[1::2]
+        return (player0_tokens, player1_tokens)
 
     def _flatten_node(self: Game, node_row: int, node_col: int) -> int:
         """ Convert a node's (row, col) position in the grid to its corresponding index in the adjacency matrix. """
-        if not (0 <= node_row < (N + 1)) or not (0 <= node_col < (N + 1)):
+        if not (0 <= node_row < N) or not (0 <= node_col < N):
             raise ValueError("Node position out of bounds.")
-        return node_row * (N + 1) + node_col
+        return node_row * N + node_col
 
     def _bfs(self: Game, start_node: int) -> set[int]:
         """ Perform a breadth-first search (BFS) to find all nodes reachable from the start_node. """
@@ -136,9 +160,9 @@ class Game:
         """ Check if the current board configuration is legal. 
             The board configuration is legal if the graph is connected (i.e., there is a path between any two nodes).
         """
-        for node in range(NUM_NODES):
+        for node in range(N**2):
             reachable_nodes = self._bfs(node)
-            if len(reachable_nodes) != NUM_NODES:
+            if len(reachable_nodes) != N**2:
                 return False
         return True
 
@@ -201,16 +225,18 @@ class Game:
         # Construct everything as a string, and then print it at once
         # This is faster. 
         output = ""
-        for r in range(N + 1):
+        output += f"Player 0 still has to collect nodes: {self.player_tokens[0]}\n"
+        output += f"Player 1 still has to collect nodes: {self.player_tokens[1]}\n"
+        for r in range(N):
             # Print node row
-            for c in range(N + 1):
+            for c in range(N):
                 if (r, c) == self.player_positions[0]:
                     output += colored("●", "red")
                 elif (r, c) == self.player_positions[1]:
                     output += colored("●", "blue")
                 else:
                     output += "●"
-                if c < N:
+                if c < N - 1:
                     node1 = self._flatten_node(r, c)
                     node2 = self._flatten_node(r, c + 1)
                     if adj_matrix[node1, node2]:
@@ -220,15 +246,15 @@ class Game:
             output += "\n"
 
             # Print vertical connections row
-            if r < N:
-                for c in range(N + 1):
+            if r < N - 1:
+                for c in range(N):
                     node1 = self._flatten_node(r, c)
                     node2 = self._flatten_node(r + 1, c)
                     if adj_matrix[node1, node2]:
                         output += "│"
                     else:
                         output += " "
-                    if c < N:
+                    if c < N - 1:
                         output += "   "
                 output += "\n"
         
