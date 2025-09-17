@@ -116,13 +116,29 @@ class Game:
             raise ValueError("Node position out of bounds.")
         return node_row * (N + 1) + node_col
 
+    def _bfs(self: Game, start_node: int) -> set[int]:
+        """ Perform a breadth-first search (BFS) to find all nodes reachable from the start_node. """
+        visited = set()
+        queue = [start_node]
+        visited.add(start_node)
+
+        while queue:
+            current_node = queue.pop(0)
+            neighbors = np.where(self.hidden_adj_matrix[current_node] == 1)[0]
+            for neighbor in neighbors:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+        
+        return visited
+
     def _check_board_legal(self: Game) -> bool:
         """ Check if the current board configuration is legal. 
-            The board configuration is legal if:
-                For each corner node of the board (i.e., (0,0), (0,N), (N,0), (N,N)), there is at least one edge connected to it.
+            The board configuration is legal if the graph is connected (i.e., there is a path between any two nodes).
         """
-        for node in self.corner_nodes:
-            if np.sum(self.hidden_adj_matrix[node]) == 0:
+        for node in range(NUM_NODES):
+            reachable_nodes = self._bfs(node)
+            if len(reachable_nodes) != NUM_NODES:
                 return False
         return True
 
