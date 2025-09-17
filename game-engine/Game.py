@@ -27,6 +27,43 @@ class StartingPos(enum.Enum):
     BOTTOM_LEFT = 2
     BOTTOM_RIGHT = 3
 
+class MoveType(enum.Enum):
+    UP = 0
+    DOWN = 1
+    LEFT = 2
+    RIGHT = 3
+
+class Node:
+    def __init__(self: Node, index: int) -> None:
+        self.index = index
+
+        self.row = self.index // N
+        self.col = self.index % N
+        if not (0 <= self.row < N) or not (0 <= self.col < N):
+            raise ValueError("Node index out of bounds.")
+
+    @staticmethod
+    def from_position(row: int, col: int) -> Node:
+        if not (0 <= row < N) or not (0 <= col < N):
+            raise ValueError("Node position out of bounds.")
+        index = row * N + col
+        return Node(index)
+    
+    def add_move(self: Node, move: MoveType) -> Node:
+        if move == MoveType.UP:
+            return Node(self.index - N)
+        elif move == MoveType.DOWN:
+            return Node(self.index + N)
+        elif move == MoveType.LEFT:
+            return Node(self.index - 1)
+        else:
+            return Node(self.index + 1)
+        
+    def __eq__(self, other):
+        if not isinstance(other, Node):
+            raise ValueError("Cannot compare Node with non-Node type.")
+        return self.index == other.index
+        
 class Game:
     def __init__(self: Game, starting_pos: Optional[StartingPos] = StartingPos.TOP_LEFT, walls: Optional[int] = MIN_WALLS) -> None:
         """ Initialize the game state. 
@@ -50,10 +87,10 @@ class Game:
         self.nodes = np.arange(N**2, dtype=np.int8)
         self.nodes_grid = self.nodes.reshape((N, N))
         self.corner_nodes = [
-            self._flatten_node(0, 0),
-            self._flatten_node(0, N - 1),
-            self._flatten_node(N - 1, 0),
-            self._flatten_node(N - 1, N - 1)
+            Node.from_position(0, 0).index,
+            Node.from_position(0, N - 1).index,
+            Node.from_position(N - 1, 0).index,
+            Node.from_position(N - 1, N - 1).index
         ]
 
         # This is the starting pos for player 0. 
@@ -72,6 +109,12 @@ class Game:
 
         # Randomly remove walls from the hidden adjacency matrix to create the board configuration.
         self.hidden_remove_walls()
+
+        # The die has to be rolled
+        self.die_roll = random.randint(1, 6)
+
+        # Player 0 starts
+        self.current_player = 0
 
     def _init_adj_matrix(self: Game) -> np.ndarray:
         """ Initialize the adjacency matrix. 
@@ -99,18 +142,18 @@ class Game:
 
         return adj_matrix
     
-    def _init_player_positions(self: Game) -> Tuple[Tuple[int, int]]:
+    def _player_to_start(self: Game, player: int) -> int:
+        """ Return the starting position of the given player. """
+        if player == 0:
+            return self.corner_nodes[self.starting_pos.value]
+        else:
+            return self.corner_nodes[3 - self.starting_pos.value]
+
+    def _init_player_positions(self: Game) -> Tuple[int, int]:
         """ Initialize player positions based on the starting position. 
             Player 0 starts at the specified starting position, and Player 1 starts at the opposite corner.
         """
-        if self.starting_pos == StartingPos.TOP_LEFT:
-            return ((0, 0), (N - 1, N - 1))
-        elif self.starting_pos == StartingPos.TOP_RIGHT:
-            return ((0, N - 1), (N - 1, 0))
-        elif self.starting_pos == StartingPos.BOTTOM_LEFT:
-            return ((N - 1, 0), (0, N - 1))
-        else:
-            return ((N - 1, N - 1), (0, 0))
+        return (self._player_to_start(0), self._player_to_start(1))
 
     def _init_player_tokens(self: Game) -> Tuple[list[int], list[int]]:
         """ Initialize the tokens (nodes) each player has to collect, in order.
@@ -120,8 +163,8 @@ class Game:
         """
         # Define unavailable nodes: corner nodes and their neighbors
         unavailable_nodes = set(self.corner_nodes)
-        for corner in self.corner_nodes:
-            neighbors = np.where(self.hidden_adj_matrix[corner] == 1)[0]
+        for corner_ind in self.corner_nodes:
+            neighbors = np.where(self.hidden_adj_matrix[corner_ind] == 1)[0]
             unavailable_nodes.update(neighbors)
 
         available_nodes = set(self.nodes) - unavailable_nodes
@@ -133,12 +176,6 @@ class Game:
         player0_tokens = player_tokens[0::2]
         player1_tokens = player_tokens[1::2]
         return (player0_tokens, player1_tokens)
-
-    def _flatten_node(self: Game, node_row: int, node_col: int) -> int:
-        """ Convert a node's (row, col) position in the grid to its corresponding index in the adjacency matrix. """
-        if not (0 <= node_row < N) or not (0 <= node_col < N):
-            raise ValueError("Node position out of bounds.")
-        return node_row * N + node_col
 
     def _bfs(self: Game, start_node: int) -> set[int]:
         """ Perform a breadth-first search (BFS) to find all nodes reachable from the start_node. """
@@ -227,19 +264,24 @@ class Game:
         output = ""
         output += f"Player 0 still has to collect nodes: {self.player_tokens[0]}\n"
         output += f"Player 1 still has to collect nodes: {self.player_tokens[1]}\n"
+        
+        player0_pos_idx = self.player_positions[0]
+        player1_pos_idx = self.player_positions[1]
+
         for r in range(N):
             # Print node row
             for c in range(N):
-                if (r, c) == self.player_positions[0]:
+                current_node_idx = Node.from_position(r, c).index
+                if current_node_idx == player0_pos_idx:
                     output += colored("●", "red")
-                elif (r, c) == self.player_positions[1]:
+                elif current_node_idx == player1_pos_idx:
                     output += colored("●", "blue")
                 else:
                     output += "●"
                 if c < N - 1:
-                    node1 = self._flatten_node(r, c)
-                    node2 = self._flatten_node(r, c + 1)
-                    if adj_matrix[node1, node2]:
+                    node1_idx = current_node_idx
+                    node2_idx = Node.from_position(r, c + 1).index
+                    if adj_matrix[node1_idx, node2_idx]:
                         output += "───"
                     else:
                         output += "   "
@@ -248,9 +290,9 @@ class Game:
             # Print vertical connections row
             if r < N - 1:
                 for c in range(N):
-                    node1 = self._flatten_node(r, c)
-                    node2 = self._flatten_node(r + 1, c)
-                    if adj_matrix[node1, node2]:
+                    node1_idx = Node.from_position(r, c).index
+                    node2_idx = Node.from_position(r + 1, c).index
+                    if adj_matrix[node1_idx, node2_idx]:
                         output += "│"
                     else:
                         output += " "
@@ -260,3 +302,46 @@ class Game:
         
         print(output)
 
+    def make_move(self: Game, player: int, move: MoveType) -> None:
+        """ Make a move for the given player in the specified direction. """
+        if player != self.current_player:
+            raise ValueError("It's not this player's turn.")
+        
+        if self.die_roll <= 0:
+            raise ValueError("The maximum number of moves has already been made.")
+        
+        start_node_idx = self.player_positions[player]
+        end_node_idx = Node(start_node_idx).add_move(move).index
+
+        if self.visible_adj_matrix[start_node_idx, end_node_idx] == 0:
+            # This move is blocked by a wall. 
+            # Update the visible adjacency matrix to reflect this knowledge.
+            # Bring back the player to their original position, give back control to the next player, 
+            # reroll die. 
+            self._remove_wall(AdjMatrixType.VISIBLE, start_node_idx, end_node_idx)
+            self.player_positions[self.current_player] = self._player_to_start(self.current_player)
+            self.current_player = 1 - self.current_player
+            
+            self.die_roll = random.randint(1, 6)
+            return
+        
+        # Update player position
+        self.player_positions[self.current_player] = end_node_idx
+        self.die_roll -= 1
+
+        # Check if the player has collected their next token
+        if end_node_idx in self.player_tokens[player]:
+            self.player_tokens[player].remove(end_node_idx)
+            print(f"Player {player} collected a token at node {end_node_idx}!")
+
+            if not self.player_tokens[player]:
+                self.is_over = True
+                print(f"Player {player} has collected all tokens and wins the game!")
+                return
+
+        if self.die_roll == 0:
+            # The player has used up all their moves. 
+            # Switch to the other player's turn and reroll die.
+            self.current_player = 1 - self.current_player
+            self.die_roll = random.randint(1, 6)
+            return
