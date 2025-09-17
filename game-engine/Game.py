@@ -1,8 +1,9 @@
 from __future__ import annotations
 import enum
-from typing import Optional
+from typing import Optional, Tuple
 import numpy as np
 import random
+from termcolor import colored
 
 # Board size
 N = 6
@@ -23,8 +24,14 @@ class AdjMatrixType(enum.Enum):
     VISIBLE = 1
     HIDDEN = 2
 
+class StartingPos(enum.Enum):
+    TOP_LEFT = 0
+    TOP_RIGHT = 1
+    BOTTOM_LEFT = 2
+    BOTTOM_RIGHT = 3
+
 class Game:
-    def __init__(self: Game, starting_player: Optional[int] = 0, walls: Optional[int] = MIN_WALLS) -> None:
+    def __init__(self: Game, starting_pos: Optional[StartingPos] = StartingPos.TOP_LEFT, walls: Optional[int] = MIN_WALLS) -> None:
         """ Initialize the game state. 
         
         Args:
@@ -32,18 +39,29 @@ class Game:
             walls (int): The number of walls (edges in graph) present on the board. It can range between 19 and 24.
         """
 
-        # Ensure valid parameters
+        # Ensure valid walls parameter
         # Since these are external inputs, we will throw exceptions for invalid values.
-        if starting_player not in [0, 1]:
-            raise ValueError("starting_player must be either 0 or 1.")
         if not (MIN_WALLS <= walls <= MAX_WALLS):
             raise ValueError(f"walls must be between {MIN_WALLS} and {MAX_WALLS}.")
 
-        self.current_player = starting_player
+        # Player 0 always starts first. 
+        # You will be able to choose whether you start as player 0 or player 1 in the MCTS agent.
+        self.current_player = 0
         self.is_over = False
         self.walls = walls
 
         self.nodes_grid = np.arange(NUM_NODES).reshape((N + 1, N + 1)) 
+        self.corner_nodes = [
+            self._flatten_node(0, 0),
+            self._flatten_node(0, N),
+            self._flatten_node(N, 0),
+            self._flatten_node(N, N)
+        ]
+
+        # This is the starting pos for player 0. 
+        # Player 1 will start in the opposite corner.
+        self.starting_pos = starting_pos
+        self.player_positions = self._init_player_positions()
 
         # We are going to have a visible adjacency matrix representing players' knowledge of the board,
         # and a hidden adjacency matrix representing the actual board configuration.
@@ -78,6 +96,19 @@ class Game:
         adj_matrix[v_down, v_up] = 1
 
         return adj_matrix
+    
+    def _init_player_positions(self: Game) -> Tuple[Tuple[int, int]]:
+        """ Initialize player positions based on the starting position. 
+            Player 0 starts at the specified starting position, and Player 1 starts at the opposite corner.
+        """
+        if self.starting_pos == StartingPos.TOP_LEFT:
+            return ((0, 0), (N, N))
+        elif self.starting_pos == StartingPos.TOP_RIGHT:
+            return ((0, N), (N, 0))
+        elif self.starting_pos == StartingPos.BOTTOM_LEFT:
+            return ((N, 0), (0, N))
+        else:
+            return ((N, N), (0, 0))
 
     def _flatten_node(self: Game, node_row: int, node_col: int) -> int:
         """ Convert a node's (row, col) position in the grid to its corresponding index in the adjacency matrix. """
@@ -90,13 +121,7 @@ class Game:
             The board configuration is legal if:
                 For each corner node of the board (i.e., (0,0), (0,N), (N,0), (N,N)), there is at least one edge connected to it.
         """
-        corner_nodes = [
-            self._flatten_node(0, 0),
-            self._flatten_node(0, N),
-            self._flatten_node(N, 0),
-            self._flatten_node(N, N)
-        ]
-        for node in corner_nodes:
+        for node in self.corner_nodes:
             if np.sum(self.hidden_adj_matrix[node]) == 0:
                 return False
         return True
@@ -150,6 +175,7 @@ class Game:
         """ Visualize the adjacency matrix. 
             Nodes are represented as UTF-8 circles (●), and edges are represented as lines (─, │).
             Squares are represented as spaces.
+            The position of Player 0 is represented as a red circle (●), and the position of Player 1 is represented as a blue circle (●).
         """
 
         adj_matrix = self.hidden_adj_matrix
@@ -162,7 +188,12 @@ class Game:
         for r in range(N + 1):
             # Print node row
             for c in range(N + 1):
-                output += "●"
+                if (r, c) == self.player_positions[0]:
+                    output += colored("●", "red")
+                elif (r, c) == self.player_positions[1]:
+                    output += colored("●", "blue")
+                else:
+                    output += "●"
                 if c < N:
                     node1 = self._flatten_node(r, c)
                     node2 = self._flatten_node(r, c + 1)
