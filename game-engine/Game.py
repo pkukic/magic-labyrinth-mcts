@@ -1,6 +1,6 @@
 from __future__ import annotations
 import enum
-from typing import Optional, Tuple
+from typing import Optional, List
 import numpy as np
 import random
 from termcolor import colored
@@ -39,25 +39,31 @@ class Node:
 
         self.row = self.index // N
         self.col = self.index % N
-        if not (0 <= self.row < N) or not (0 <= self.col < N):
+        if not Node._check_valid_position(self.row, self.col):
             raise ValueError("Node index out of bounds.")
 
     @staticmethod
+    def _check_valid_position(row: int, col: int) -> bool:
+        return 0 <= row < N and 0 <= col < N
+
+    @staticmethod
     def from_position(row: int, col: int) -> Node:
-        if not (0 <= row < N) or not (0 <= col < N):
+        if not Node._check_valid_position(row, col):
             raise ValueError("Node position out of bounds.")
         index = row * N + col
-        return Node(index)
+        return Node(index) 
     
     def add_move(self: Node, move: MoveType) -> Node:
-        if move == MoveType.UP:
-            return Node(self.index - N)
-        elif move == MoveType.DOWN:
-            return Node(self.index + N)
-        elif move == MoveType.LEFT:
-            return Node(self.index - 1)
-        else:
-            return Node(self.index + 1)
+        delta_dict = {
+            MoveType.UP: (-1, 0),
+            MoveType.DOWN: (1, 0),
+            MoveType.LEFT: (0, -1),
+            MoveType.RIGHT: (0, 1)
+        }
+        delta_row, delta_col = delta_dict[move]
+        new_row = self.row + delta_row
+        new_col = self.col + delta_col
+        return self.from_position(new_row, new_col)
         
     def __eq__(self, other):
         if not isinstance(other, Node):
@@ -111,10 +117,15 @@ class Game:
         self.hidden_remove_walls()
 
         # The die has to be rolled
-        self.die_roll = random.randint(1, 6)
+        self.die_roll = 0
+        self._roll_die()
 
         # Player 0 starts
         self.current_player = 0
+
+    def _roll_die(self: Game) -> None:
+        """ Roll the die and update the die_roll attribute. """
+        self.die_roll = random.randint(1, 6)
 
     def _init_adj_matrix(self: Game) -> np.ndarray:
         """ Initialize the adjacency matrix. 
@@ -149,13 +160,13 @@ class Game:
         else:
             return self.corner_nodes[3 - self.starting_pos.value]
 
-    def _init_player_positions(self: Game) -> Tuple[int, int]:
+    def _init_player_positions(self: Game) -> List[int, int]:
         """ Initialize player positions based on the starting position. 
             Player 0 starts at the specified starting position, and Player 1 starts at the opposite corner.
         """
-        return (self._player_to_start(0), self._player_to_start(1))
+        return [self._player_to_start(0), self._player_to_start(1)]
 
-    def _init_player_tokens(self: Game) -> Tuple[list[int], list[int]]:
+    def _init_player_tokens(self: Game) -> List[list[int], list[int]]:
         """ Initialize the tokens (nodes) each player has to collect, in order.
             Each player will have NUM_TOKENS unique nodes to collect, randomly selected from the AVAILABLE nodes on the board.
             A node is defined as available if it is not a corner node, nor a neighbor of a corner node in the hidden adjacency matrix.
@@ -264,6 +275,7 @@ class Game:
         output = ""
         output += f"Player 0 still has to collect nodes: {self.player_tokens[0]}\n"
         output += f"Player 1 still has to collect nodes: {self.player_tokens[1]}\n"
+        output += f"Player {self.current_player}'s turn. Die roll: {self.die_roll}\n"
         
         player0_pos_idx = self.player_positions[0]
         player1_pos_idx = self.player_positions[1]
@@ -304,25 +316,28 @@ class Game:
 
     def make_move(self: Game, player: int, move: MoveType) -> None:
         """ Make a move for the given player in the specified direction. """
+        
         if player != self.current_player:
+            print(f"Player {player} attempted to make a move out of turn. Move ignored.")
             raise ValueError("It's not this player's turn.")
         
         if self.die_roll <= 0:
+            print(f"Player {player} attempted to make a move with no remaining moves. Move ignored.")
             raise ValueError("The maximum number of moves has already been made.")
         
         start_node_idx = self.player_positions[player]
         end_node_idx = Node(start_node_idx).add_move(move).index
 
-        if self.visible_adj_matrix[start_node_idx, end_node_idx] == 0:
+        if self.hidden_adj_matrix[start_node_idx, end_node_idx] == 0:
             # This move is blocked by a wall. 
             # Update the visible adjacency matrix to reflect this knowledge.
             # Bring back the player to their original position, give back control to the next player, 
             # reroll die. 
+            print(f"Player {player} hit a wall! The visible map is updated.")
             self._remove_wall(AdjMatrixType.VISIBLE, start_node_idx, end_node_idx)
             self.player_positions[self.current_player] = self._player_to_start(self.current_player)
             self.current_player = 1 - self.current_player
-            
-            self.die_roll = random.randint(1, 6)
+            self._roll_die()
             return
         
         # Update player position
@@ -343,5 +358,5 @@ class Game:
             # The player has used up all their moves. 
             # Switch to the other player's turn and reroll die.
             self.current_player = 1 - self.current_player
-            self.die_roll = random.randint(1, 6)
+            self._roll_die()
             return
